@@ -2,7 +2,7 @@
 
 Usando la herramienta **netdiscover**, se identificó la dirección IP **192.168.1.187** de la maquina virtual **kioptrix level 2**.
 
-```bash
+```shell
 root@kali:~#netdiscover -i eth0 -r 192.168.1.0/24
 
 Currently scanning: Finished!   |   Screen View: Unique Hosts                                                                                       
